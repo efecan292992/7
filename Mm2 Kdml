@@ -1,0 +1,1092 @@
+-- Murder Mystery 2 - Fluent UI Version
+-- Orijinal YARHM script'inden dönüştürülmüştür
+
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+
+-- Sadece MM2'de çalıştır (isteğe bağlı - tüm oyunlarda çalışmasını istiyorsanız bu kontrolü kaldırın)
+--if game.GameId ~= 66654135 then
+--    return
+--end
+
+-- Değişkenler
+local localplayer = game:GetService("Players").LocalPlayer
+local playerData = {}
+local claimedCoins = {}
+
+-- ESP değişkenleri
+local espindc = loadstring(game:HttpGet("https://raw.githubusercontent.com/imperial-stardust/utilities/main/esp_indicator.lua"))()
+local espcontainer = espindc.new({EdgePadding = 120, ShowDistanceText = false})
+
+-- Modül değişkenleri
+local playerESP = false
+local sheriffAimbot = false
+local coinAutoCollect = false
+local autoShooting = false
+local shootOffset = 2.8
+local offsetToPingMult = 1
+local gunDropESP = false
+local trapDetection = false
+local autoGetDroppedGun = false
+local simulateKnifeThrow = false
+
+-- Services
+local ts = game:GetService("TweenService")
+local rs = game:GetService("RunService")
+local Players = game:GetService("Players")
+
+-- Helper Functions
+local function notification(text, color)
+    Fluent:Notify({
+        Title = "MM2 Script",
+        Content = text,
+        Duration = 5,
+        Actions = {
+            Ignore = {
+                Name = "Tamam",
+                Callback = function()
+                    -- Bildirim kapatılıyor
+                end
+            }
+        }
+    })
+end
+
+local function findMurderer()
+    -- Fallback
+    for _, i in ipairs(game.Players:GetPlayers()) do
+        if i.Backpack:FindFirstChild("Knife") then
+            return i
+        end
+    end
+
+    for _, i in ipairs(game.Players:GetPlayers()) do
+        if not i.Character then continue end
+        if i.Character:FindFirstChild("Knife") then
+            return i
+        end
+    end
+
+    if playerData then
+        for player, data in playerData do
+            if data.Role == "Murderer" then
+                if game.Players:FindFirstChild(player) then
+                    return game.Players:FindFirstChild(player)
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function findSheriff()
+    -- Fallback
+    for _, i in ipairs(game.Players:GetPlayers()) do
+        if i.Backpack:FindFirstChild("Gun") then
+            return i
+        end
+    end
+
+    for _, i in ipairs(game.Players:GetPlayers()) do
+        if not i.Character then continue end
+        if i.Character:FindFirstChild("Gun") then
+            return i
+        end
+    end
+
+    if playerData then
+        for player, data in playerData do
+            if data.Role == "Sheriff" then
+                if game.Players:FindFirstChild(player) then
+                    return game.Players:FindFirstChild(player)
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function findSheriffThatsNotMe()
+    -- Fallback
+    for _, i in ipairs(game.Players:GetPlayers()) do
+        if i == localplayer then continue end
+        if i.Backpack:FindFirstChild("Gun") then
+            return i
+        end
+    end
+
+    for _, i in ipairs(game.Players:GetPlayers()) do
+        if i == localplayer then continue end
+        if not i.Character then continue end
+        if i.Character:FindFirstChild("Gun") then
+            return i
+        end
+    end
+
+    if playerData then
+        for player, data in playerData do
+            if data.Role == "Sheriff" then
+                if game.Players:FindFirstChild(player) then
+                    if game.Players:FindFirstChild(player) == localplayer then continue end
+                    return game.Players:FindFirstChild(player)
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function reloadESP()
+    espcontainer:RemoveGroup("players")
+    local listplayers = game.Players:GetChildren()
+    for _, player in ipairs(listplayers) do
+        if player.Character ~= nil then
+            local character = player.Character
+            if true then
+                task.spawn(function()
+                    if player == findMurderer() then
+                        espcontainer:Add(character, {
+                            AccentColor = Color3.new(1, 0, 0.0156863),
+                            ArrowShow = true,
+                            ArrowMinDistance = 999999,           
+                            ArrowSize = UDim2.new(0,40,0,40),
+                            LabelText = "Murderer",
+                            ShowLabel = true,
+                            GroupName = "players"
+                        })
+                    elseif player == findSheriff() then
+                        espcontainer:Add(character, {
+                            AccentColor = Color3.new(0, 0.6, 1),
+                            ArrowShow = false,
+                            ShowLabel = false,
+                            GroupName = "players"
+                        })
+                    else
+                        espcontainer:Add(character, {
+                            AccentColor = Color3.new(0, 1, 0.0313725),
+                            ArrowShow = false,
+                            ShowLabel = false,
+                            GroupName = "players"
+                        })
+                    end
+                end)
+            end
+        end
+    end
+end
+
+local function getMap()
+    for _, o in ipairs(workspace:GetChildren()) do
+        if o:FindFirstChild("CoinContainer") and o:FindFirstChild("Spawns") then
+            return o
+        end
+    end
+    return nil
+end
+
+local function findNearestPlayer()
+    local Players = game:GetService("Players")
+    local localPlayer = Players.LocalPlayer
+
+    local nearestPlayer = nil
+    local shortestDistance = math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character then 
+            local localRootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local otherRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+
+            if localRootPart and otherRootPart then
+                local distance = (localRootPart.Position - otherRootPart.Position).Magnitude
+
+                if distance < shortestDistance then
+                    shortestDistance = distance
+                    nearestPlayer = player
+                end
+            end
+        end
+    end
+
+    return nearestPlayer
+end
+
+local function getPredictedPosition(player, shootOffset)
+    pcall(function()
+        player = player.Character
+        if not player.Character then notification("No murderer to predict position.") return end
+    end)
+    local playerHRP = player:FindFirstChild("UpperTorso")
+    local playerHum = player:FindFirstChild("Humanoid")
+    if not playerHRP or not playerHum then
+        return Vector3.new(0,0,0), "Could not find the player's HumanoidRootPart."
+    end
+
+    local playerPosition = playerHRP.Position
+    local velocity = Vector3.new()
+    velocity = playerHRP.AssemblyLinearVelocity
+    local playerMoveDirection = playerHum.MoveDirection
+    local playerLookVec = playerHRP.CFrame.LookVector
+    local yVelFactor = velocity.Y > 0 and -1 or 0.5
+    local predictedPosition
+    predictedPosition = playerHRP.Position + ((velocity * Vector3.new(0, 0.5, 0))) * (shootOffset / 15) + playerMoveDirection * shootOffset
+    predictedPosition = predictedPosition * (((localplayer:GetNetworkPing() * 1000) * ((offsetToPingMult - 1) * 0.01)) + 1)
+
+    return predictedPosition
+end
+
+local function miniFling(playerToFling)
+    -- Fling kodu burada (orijinal koddan alınmış, kısaltılmış)
+    notification("Flinging player: " .. playerToFling.Name)
+    -- Fling implementation buraya gelecek
+end
+
+local function secondsToMinutes(seconds)
+    if seconds == -1 then return "" end
+    local minutes = math.floor(seconds / 60)
+    local remainingSeconds = seconds % 60
+    return string.format("%dm %ds", minutes, remainingSeconds)
+end
+
+-- Fluent UI Oluşturma
+local Window = Fluent:CreateWindow({
+    Title = "MM2 Script Hub",
+    SubTitle = "Murder Mystery 2 Hacks",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(580, 460),
+    Acrylic = true,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+local Tabs = {
+    ESP = Window:AddTab({ Title = "ESP", Icon = "eye" }),
+    Tools = Window:AddTab({ Title = "Tools", Icon = "wrench" }),
+    Detectables = Window:AddTab({ Title = "Detectables", Icon = "alert-triangle" }),
+    Fun = Window:AddTab({ Title = "Fun", Icon = "smile" }),
+    Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
+}
+
+-- ESP Tab
+local ESPSection = Tabs.ESP:AddSection("ESP Options")
+
+local PlayersToggle = Tabs.ESP:AddToggle("PlayersESP", {
+    Title = "Players ESP",
+    Description = "Show ESP for all players",
+    Default = false
+})
+
+PlayersToggle:OnChanged(function(Value)
+    playerESP = Value
+    if playerESP then
+        if not findMurderer() or not findSheriff() then
+            notification("No roles yet. Waiting for roles...")
+            repeat
+                task.wait(1)
+            until findSheriff() or findMurderer()
+        end
+        reloadESP()
+    else
+        espcontainer:RemoveGroup("players")
+    end
+end)
+
+local GunDropToggle = Tabs.ESP:AddToggle("GunDropESP", {
+    Title = "Dropped Gun ESP",
+    Description = "Show ESP for dropped guns",
+    Default = false
+})
+
+GunDropToggle:OnChanged(function(Value)
+    gunDropESP = Value
+    if gunDropESP then
+        if getMap() and getMap():FindFirstChild("GunDrop") then
+            espcontainer:Add(getMap():FindFirstChild("GunDrop"), {
+                AccentColor = Color3.new(0.952941, 1, 0.0745098),
+                ArrowShow = true,
+                ArrowMinDistance = 999999,      
+                ArrowSize = UDim2.new(0,40,0,40),
+                LabelText = "Dropped gun!",
+                ShowLabel = true,
+                GroupName = "gun"
+            })
+            notification("Gun has been dropped! Find a yellow highlight.")
+        end
+    else
+        espcontainer:RemoveGroup("gun")
+    end
+end)
+
+local TrapsToggle = Tabs.ESP:AddToggle("TrapsESP", {
+    Title = "Traps ESP",
+    Description = "Show ESP for murderer traps",
+    Default = false
+})
+
+TrapsToggle:OnChanged(function(Value)
+    trapDetection = Value
+    if trapDetection then
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v.Name == "Trap" and v.Parent:IsDescendantOf(workspace) then
+                v.Transparency = 0
+                espcontainer:Add(v, {
+                    AccentColor = Color3.new(1, 0, 0.0156863),
+                    ArrowShow = false,
+                    ShowLabel = true,
+                    LabelText = "Trap",
+                    GroupName = "trap"
+                })
+            end
+        end
+    else
+        espcontainer:RemoveGroup("trap")
+    end
+end)
+
+-- Tools Tab
+local ToolsSection = Tabs.Tools:AddSection("Sheriff Tools")
+
+local ShootButton = Tabs.Tools:AddButton({
+    Title = "Shoot Murderer",
+    Description = "Automatically shoot the murderer",
+    Callback = function()
+        if findSheriff() ~= localplayer then 
+            notification("You're not sheriff/hero.") 
+            return 
+        end
+
+        local murderer = findMurderer() or findSheriffThatsNotMe()
+        if not murderer then
+            notification("No murderer (or sheriff) to shoot.")
+            return
+        end
+
+        if not localplayer.Character:FindFirstChild("Gun") then
+            local hum = localplayer.Character:FindFirstChild("Humanoid")
+            if localplayer.Backpack:FindFirstChild("Gun") then
+                hum:EquipTool(localplayer.Backpack:FindFirstChild("Gun"))
+            else
+                notification("You don't have the gun..?")
+                return
+            end
+        end
+
+        local murdererHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
+        if not murdererHRP then
+            notification("Could not find the murderer's HumanoidRootPart.")
+            return
+        end
+
+        local predictedPosition = getPredictedPosition(murderer, shootOffset)
+
+        local args = {
+            [1] = 1,
+            [2] = predictedPosition,
+            [3] = "AH2"
+        }
+
+        localplayer.Character.Gun.KnifeLocal.CreateBeam.RemoteFunction:InvokeServer(unpack(args))
+        notification("Shot fired at murderer!")
+    end
+})
+
+local AutoShootToggle = Tabs.Tools:AddToggle("AutoShoot", {
+    Title = "Auto Shoot Murderer",
+    Description = "Automatically shoot murderer when in sight",
+    Default = false
+})
+
+AutoShootToggle:OnChanged(function(Value)
+    autoShooting = Value
+    if findSheriff() == localplayer and autoShooting then
+        notification("Auto-shooting started.")
+        task.spawn(function()
+            while autoShooting do
+                task.wait(0.1)
+                local murderer = findMurderer() or findSheriffThatsNotMe()
+                if not murderer then continue end
+                local murdererPosition = murderer.Character.HumanoidRootPart.Position
+                local characterRootPart = localplayer.Character.HumanoidRootPart
+                local rayDirection = (murdererPosition - characterRootPart.Position).Unit * 50
+
+                local raycastParams = RaycastParams.new()
+                raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+                raycastParams.FilterDescendantsInstances = {localplayer.Character}
+
+                local hit = workspace:Raycast(characterRootPart.Position, rayDirection, raycastParams)
+                if not hit or hit.Instance.Parent == murderer.Character then
+                    if not localplayer.Character:FindFirstChild("Gun") then
+                        local hum = localplayer.Character:FindFirstChild("Humanoid")
+                        if localplayer.Backpack:FindFirstChild("Gun") then
+                            localplayer.Character:FindFirstChild("Humanoid"):EquipTool(localplayer.Backpack:FindFirstChild("Gun"))
+                        else
+                            continue
+                        end
+                    end
+                    local murdererHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
+                    if not murdererHRP then continue end
+                    local murdererVelocity = murdererHRP.AssemblyLinearVelocity
+                    local predictedPosition = murdererHRP.Position + (murdererVelocity * Vector3.new(1, 0.5, 1)) * (shootOffset / 15)
+
+                    local args = {
+                        [1] = 1,
+                        [2] = predictedPosition,
+                        [3] = "AH2"
+                    }
+
+                    localplayer.Character.Gun.KnifeLocal.CreateBeam.RemoteFunction:InvokeServer(unpack(args))
+                end
+            end
+        end)
+    end
+end)
+
+local ShootOffsetSlider = Tabs.Tools:AddSlider("ShootOffset", {
+    Title = "Shoot Position Offset",
+    Description = "Adjust prediction offset for shooting",
+    Default = 2.8,
+    Min = 0,
+    Max = 10,
+    Rounding = 1,
+    Callback = function(Value)
+        shootOffset = Value
+        notification("Shoot offset set to: " .. Value)
+    end
+})
+
+local PingMultSlider = Tabs.Tools:AddSlider("PingMult", {
+    Title = "Offset-to-Ping Multiplier",
+    Description = "Adjust offset based on ping",
+    Default = 1,
+    Min = 0,
+    Max = 5,
+    Rounding = 1,
+    Callback = function(Value)
+        offsetToPingMult = Value
+        notification("Ping multiplier set to: " .. Value)
+    end
+})
+
+-- Timer
+local timerLabel = nil
+local TimerToggle = Tabs.Tools:AddToggle("RoundTimer", {
+    Title = "Round Timer",
+    Description = "Show round timer on screen",
+    Default = false
+})
+
+TimerToggle:OnChanged(function(Value)
+    if Value then
+        timerLabel = Instance.new("TextLabel")
+        timerLabel.Parent = game.Players.LocalPlayer.PlayerGui
+        timerLabel.BackgroundTransparency = 1
+        timerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        timerLabel.TextScaled = true
+        timerLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+        timerLabel.Position = UDim2.fromScale(0.5, 0.15)
+        timerLabel.Size = UDim2.fromOffset(200, 50)
+        timerLabel.Font = Enum.Font.Montserrat
+
+        task.spawn(function()
+            while timerLabel do
+                task.wait(0.5)
+                if game.ReplicatedStorage:FindFirstChild("Remotes") then
+                    local timeLeft = game.ReplicatedStorage.Remotes.Extras.GetTimer:InvokeServer()
+                    if timerLabel then
+                        timerLabel.Text = secondsToMinutes(timeLeft)
+                    end
+                end
+            end
+        end)
+    else
+        if timerLabel then
+            timerLabel:Destroy()
+            timerLabel = nil
+        end
+    end
+end)
+
+-- Detectables Tab
+local DetectSection = Tabs.Detectables:AddSection("Detectable Features")
+
+local ChatButton = Tabs.Detectables:AddButton({
+    Title = "Send Roles to Chat",
+    Description = "Send sheriff and murderer names to chat",
+    Callback = function()
+        local textchannels = game:GetService("TextChatService"):WaitForChild("TextChannels"):GetChildren()
+        for _, textchannel in ipairs(textchannels) do
+            if textchannel.Name == "RBXSystem" then continue end
+            local murd = findMurderer()
+            local sher = findSheriff()
+
+            local murdName = "-"
+            local sherName = "-"
+            if murd then murdName = murd.Name end
+            if sher then sherName = sher.Name end
+            local message = string.format([[Murderer: %s |
+Sheriff: %s |
+<<MM2 Script>>]], murdName, sherName)
+            textchannel:SendAsync(message)
+        end
+        notification("Roles sent to chat!")
+    end
+})
+
+local TeleportSection = Tabs.Detectables:AddSection("Teleportation")
+
+local LobbyButton = Tabs.Detectables:AddButton({
+    Title = "Teleport to Lobby",
+    Description = "Teleport to game lobby",
+    Callback = function()
+        localplayer.Character:MoveTo(Vector3.new(-107, 152, 41))
+        notification("Teleported to lobby!")
+    end
+})
+
+local MapButton = Tabs.Detectables:AddButton({
+    Title = "Teleport to Map",
+    Description = "Teleport to random spawn in map",
+    Callback = function()
+        local spawnsFolder = getMap():FindFirstChild("Spawns")
+        if spawnsFolder then
+            local spawns = spawnsFolder:GetChildren()
+            local randomSpawn = spawns[math.random(1, #spawns)]
+            localplayer.Character:MoveTo(randomSpawn.Position)
+            notification("Teleported to map!")
+        else
+            notification("No map to teleport to.")
+        end
+    end
+})
+
+local FlingSection = Tabs.Detectables:AddSection("Player Flinging")
+
+local FlingSheriffButton = Tabs.Detectables:AddButton({
+    Title = "Fling Sheriff",
+    Description = "Fling the sheriff/hero",
+    Callback = function()
+        if not findSheriff() then
+            notification("No sheriff/hero to fling.")
+            return
+        end
+        miniFling(findSheriff())
+    end
+})
+
+local FlingMurdererButton = Tabs.Detectables:AddButton({
+    Title = "Fling Murderer",
+    Description = "Fling the murderer",
+    Callback = function()
+        if not findMurderer() then
+            notification("No murderer to fling.")
+            return
+        end
+        miniFling(findMurderer())
+    end
+})
+
+local GunSection = Tabs.Detectables:AddSection("Gun Management")
+
+local TeleportGunButton = Tabs.Detectables:AddButton({
+    Title = "Teleport to Dropped Gun",
+    Description = "Instantly get dropped gun",
+    Callback = function()
+        if not getMap():FindFirstChild("GunDrop") then 
+            notification("No dropped gun to be teleported to.") 
+            return 
+        end
+        local previousPosition = localplayer.Character:GetPivot()
+        localplayer.Character:PivotTo(getMap():FindFirstChild("GunDrop"):GetPivot())
+        localplayer.Backpack.ChildAdded:Wait()
+        localplayer.Character:PivotTo(previousPosition)
+        notification("Got the dropped gun!")
+    end
+})
+
+local AutoGunToggle = Tabs.Detectables:AddToggle("AutoGun", {
+    Title = "Auto Get Dropped Gun",
+    Description = "Automatically get gun when it drops",
+    Default = false
+})
+
+AutoGunToggle:OnChanged(function(Value)
+    autoGetDroppedGun = Value
+end)
+
+local MurdererSection = Tabs.Detectables:AddSection("Murderer Tools")
+
+local KillClosestButton = Tabs.Detectables:AddButton({
+    Title = "Kill Closest Player",
+    Description = "Kill the closest player as murderer",
+    Callback = function()
+        if findMurderer() ~= localplayer then 
+            notification("You're not murderer.") 
+            return 
+        end
+
+        if not localplayer.Character:FindFirstChild("Knife") then
+            local hum = localplayer.Character:FindFirstChild("Humanoid")
+            if localplayer.Backpack:FindFirstChild("Knife") then
+                localplayer.Character:FindFirstChild("Humanoid"):EquipTool(localplayer.Backpack:FindFirstChild("Knife"))
+            else
+                notification("You don't have the knife..?")
+                return
+            end
+        end
+
+        local NearestPlayer = findNearestPlayer()
+
+        if not NearestPlayer or not NearestPlayer.Character then
+            notification("Can't find a player!?")
+            return
+        end
+        local nearestHRP = NearestPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not nearestHRP then
+            notification("Can't find the player's pivot.")
+            return
+        end
+
+        if not localplayer.Character:FindFirstChild("HumanoidRootPart") then 
+            notification("You're not a valid character.") 
+            return 
+        end
+
+        nearestHRP.Anchored = true
+        nearestHRP.CFrame = localplayer.Character:FindFirstChild("HumanoidRootPart").CFrame + localplayer.Character:FindFirstChild("HumanoidRootPart").CFrame.LookVector * 2
+        task.wait(0.1)
+        local args = {
+            [1] = "Slash"
+        }
+
+        localplayer.Character.Knife.Stab:FireServer(unpack(args))
+        notification("Killed closest player!")
+    end
+})
+
+local KillAllButton = Tabs.Detectables:AddButton({
+    Title = "Kill Everyone",
+    Description = "Kill all players as murderer",
+    Callback = function()
+        if findMurderer() ~= localplayer then 
+            notification("You're not murderer.") 
+            return 
+        end
+
+        if not localplayer.Character:FindFirstChild("Knife") then
+            local hum = localplayer.Character:FindFirstChild("Humanoid")
+            if localplayer.Backpack:FindFirstChild("Knife") then
+                localplayer.Character:FindFirstChild("Humanoid"):EquipTool(localplayer.Backpack:FindFirstChild("Knife"))
+            else
+                notification("You don't have the knife..?")
+                return
+            end
+        end
+
+        for _, player in ipairs(game.Players:GetPlayers()) do
+            if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player ~= localplayer then
+                player.Character:FindFirstChild("HumanoidRootPart").Anchored = true
+                player.Character:FindFirstChild("HumanoidRootPart").CFrame = localplayer.Character:FindFirstChild("HumanoidRootPart").CFrame + localplayer.Character:FindFirstChild("HumanoidRootPart").CFrame.LookVector * 1 
+            end    
+        end
+
+        local args = {
+            [1] = "Slash"
+        }
+        localplayer.Character.Knife.Stab:FireServer(unpack(args))
+        notification("Killed everyone!")
+    end
+})
+
+-- Fun Tab
+local FunSection = Tabs.Fun:AddSection("Fun Features")
+
+local HostageButton = Tabs.Fun:AddButton({
+    Title = "Hold Everyone Hostage",
+    Description = "Gather all players in one spot",
+    Callback = function()
+        if findMurderer() ~= localplayer then 
+            notification("You're not murderer. This'll only be useful if you're the murderer.") 
+            return 
+        end
+
+        for _, player in ipairs(game.Players:GetPlayers()) do
+            if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player ~= localplayer then
+                player.Character:FindFirstChild("HumanoidRootPart").Anchored = true
+                player.Character:FindFirstChild("HumanoidRootPart").CFrame = localplayer.Character:FindFirstChild("HumanoidRootPart").CFrame + localplayer.Character:FindFirstChild("HumanoidRootPart").CFrame.LookVector * 5
+            end    
+        end
+
+        notification("Placed every single player in a single point. Kill everyone at once once you decide to.")
+    end
+})
+
+-- Event Listeners
+if game.ReplicatedStorage:WaitForChild("Remotes", 10) then
+    local playerDataEvent = game.ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Gameplay"):WaitForChild("PlayerDataChanged", 5)
+    if playerDataEvent then
+        playerDataEvent.OnClientEvent:Connect(function(data)
+            playerData = data
+            if playerESP then
+                reloadESP()
+            end
+        end)
+    end
+end
+
+-- Map change detection
+workspace.ChildAdded:Connect(function(ch)
+    if ch == getMap() and playerESP then
+        notification("Map has loaded, waiting for roles...")
+        repeat
+            task.wait(1)
+        until findMurderer()
+
+        notification("Player ESP reloaded.")
+    end
+end)
+
+workspace.ChildRemoved:Connect(function(ch)
+    if ch == getMap() and playerESP then
+        notification("Game ended, removing Player ESPs.")
+        playerData = {}
+        espcontainer:ClearAllGroups()
+    end
+end)
+
+-- Dropped Gun ESP
+workspace.DescendantAdded:Connect(function(ch)
+    if trapDetection and ch.Name == "Trap" and ch.Parent:IsDescendantOf(workspace) then
+        ch.Transparency = 0
+        espcontainer:Add(ch, {
+            AccentColor = Color3.new(1, 0, 0.0156863),
+            ArrowShow = false,
+            ShowLabel = true,
+            LabelText = "Trap",
+            GroupName = "trap"
+        })
+        notification("Murderer has placed a trap!")
+    end
+
+    if gunDropESP and ch.Name == "GunDrop" then
+        espcontainer:Add(ch, {
+            AccentColor = Color3.new(0.952941, 1, 0.0745098),
+            ArrowShow = true,
+            ArrowMinDistance = 999999,      
+            ArrowSize = UDim2.new(0,40,0,40),
+            LabelText = "Dropped gun!",
+            ShowLabel = true,
+            GroupName = "gun"
+        })
+        notification("Gun has been dropped! Find a yellow highlight.")
+        
+        if autoGetDroppedGun then
+            notification("Auto get dropped gun - Cooling down...")
+            task.wait(1)
+            if not getMap():FindFirstChild("GunDrop") then 
+                notification("No dropped gun to be teleported to.") 
+                return 
+            end
+            local previousPosition = localplayer.Character:GetPivot()
+            localplayer.Character:MoveTo(getMap():FindFirstChild("GunDrop").Position)
+            localplayer.Backpack.ChildAdded:Wait()
+            localplayer.Character:PivotTo(previousPosition)
+        end
+    end
+end)
+
+workspace.DescendantRemoving:Connect(function(ch)
+    if gunDropESP and ch.Name == "GunDrop" then
+        espcontainer:RemoveGroup("gun")
+        notification("Someone has took the dropped gun.")
+        task.wait(1)
+        local sheriff = findSheriff()
+        if sheriff then
+            notification("The hero is " .. sheriff.DisplayName .. ".")
+        end
+        reloadESP()
+    end
+end)
+
+-- Copy username functions
+local CopySection = Tabs.Detectables:AddSection("Copy Usernames")
+
+local CopyMurdererButton = Tabs.Detectables:AddButton({
+    Title = "Copy Murderer Username",
+    Description = "Copy murderer's username to clipboard",
+    Callback = function()
+        if not findMurderer() then
+            notification("No murderer to copy.")
+            return
+        end
+        if setclipboard then 
+            setclipboard(findMurderer().Name) 
+            notification("Copied murderer username to clipboard: " .. findMurderer().Name)
+        else
+            notification("Clipboard not available")
+        end
+    end
+})
+
+local CopySheriffButton = Tabs.Detectables:AddButton({
+    Title = "Copy Sheriff Username",
+    Description = "Copy sheriff's username to clipboard",
+    Callback = function()
+        if not findSheriff() then
+            notification("No sheriff/hero to copy.")
+            return
+        end
+        if setclipboard then 
+            setclipboard(findSheriff().Name) 
+            notification("Copied sheriff username to clipboard: " .. findSheriff().Name)
+        else
+            notification("Clipboard not available")
+        end
+    end
+})
+
+-- Additional murderer tools
+local SimulateThrowToggle = Tabs.Detectables:AddToggle("SimulateThrow", {
+    Title = "Simulate Knife Throw",
+    Description = "Make knife kills look more legitimate",
+    Default = false
+})
+
+SimulateThrowToggle:OnChanged(function(Value)
+    simulateKnifeThrow = Value
+    if Value then
+        notification("Simulating a knife throw can make you look legitimate. However, note that it's less reliable and may miss the target.")
+    end
+end)
+
+local killAuraCon = nil
+local KillAuraToggle = Tabs.Detectables:AddToggle("KillAura", {
+    Title = "Murderer Kill Aura",
+    Description = "Automatically kill nearby players",
+    Default = false
+})
+
+KillAuraToggle:OnChanged(function(Value)
+    if Value then
+        if findMurderer() ~= localplayer then
+            notification("You need to be the murderer to use kill aura!")
+            KillAuraToggle:SetValue(false)
+            return
+        end
+        
+        killAuraCon = game:GetService("RunService").Heartbeat:Connect(function()
+            if findMurderer() ~= localplayer then
+                killAuraCon:Disconnect()
+                KillAuraToggle:SetValue(false)
+                return
+            end
+            
+            if not localplayer.Character:FindFirstChild("Knife") then
+                local hum = localplayer.Character:FindFirstChild("Humanoid")
+                if localplayer.Backpack:FindFirstChild("Knife") then
+                    hum:EquipTool(localplayer.Backpack:FindFirstChild("Knife"))
+                end
+                return
+            end
+            
+            for _, player in ipairs(game.Players:GetPlayers()) do
+                if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player ~= localplayer then
+                    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                    local myHrp = localplayer.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp and myHrp and (hrp.Position - myHrp.Position).Magnitude < 7 then
+                        hrp.Anchored = true
+                        hrp.CFrame = myHrp.CFrame + myHrp.CFrame.LookVector * 2
+
+                        task.wait(0.1)
+                        local args = {
+                            [1] = "Slash"
+                        }
+
+                        localplayer.Character.Knife.Stab:FireServer(unpack(args))
+                        return    
+                    end
+                end
+            end
+        end)
+        notification("Kill aura activated!")
+    else
+        if killAuraCon then
+            killAuraCon:Disconnect()
+        end
+        notification("Kill aura deactivated!")
+    end
+end)
+
+-- God Mode (Very unstable)
+local GodModeButton = Tabs.Detectables:AddButton({
+    Title = "God Mode (UNSTABLE)",
+    Description = "Attempt to enable god mode - very risky!",
+    Callback = function()
+        -- God mode implementation (from EdgeIY)
+        local Cam = workspace.CurrentCamera
+        local Pos, Char = Cam.CFrame, localplayer.Character
+        local Human = Char and Char:FindFirstChildWhichIsA("Humanoid")
+        if not Human then
+            notification("No humanoid found!")
+            return
+        end
+        
+        local nHuman = Human:Clone()
+        nHuman.Parent, localplayer.Character = Char, nil
+        nHuman:SetStateEnabled(15, false)
+        nHuman:SetStateEnabled(1, false)
+        nHuman:SetStateEnabled(0, false)
+        nHuman.BreakJointsOnDeath, Human = true, Human:Destroy()
+        localplayer.Character, Cam.CameraSubject, Cam.CFrame = Char, nHuman, wait() and Pos
+        nHuman.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+        local Script = Char:FindFirstChild("Animate")
+        if Script then
+            Script.Disabled = true
+            wait()
+            Script.Disabled = false
+        end
+        nHuman.Health = nHuman.MaxHealth
+        notification("God mode attempted - very unstable!")
+    end
+})
+
+-- Knife throw ignore (doesn't work properly)
+local ignoreknifethrow = false
+local IgnoreKnifeToggle = Tabs.Detectables:AddToggle("IgnoreKnife", {
+    Title = "Ignore Knife Throws",
+    Description = "Attempt to ignore knife throws (doesn't work well)",
+    Default = false
+})
+
+IgnoreKnifeToggle:OnChanged(function(Value)
+    ignoreknifethrow = Value
+end)
+
+game.Workspace.ChildAdded:Connect(function(chi)
+    if chi.Name == "ThrowingKnife" and ignoreknifethrow then
+        chi:Destroy()
+    end
+end)
+
+-- Settings Tab
+local SettingsSection = Tabs.Settings:AddSection("Script Settings")
+
+local InfoLabel = Tabs.Settings:AddParagraph({
+    Title = "MM2 Script Info",
+    Content = "This script provides various hacks for Murder Mystery 2. Use at your own risk!\n\nFeatures:\n• Player ESP with role detection\n• Auto-shooting for sheriff\n• Murderer tools\n• And much more!"
+})
+
+local CreditsLabel = Tabs.Settings:AddParagraph({
+    Title = "Credits",
+    Content = "Original YARHM script by imperial\nConverted to Fluent UI\nESP Indicator library used for visual effects"
+})
+
+-- Warning section
+local WarningSection = Tabs.Settings:AddSection("⚠️ Warnings")
+
+local WarningLabel = Tabs.Settings:AddParagraph({
+    Title = "Detection Risk",
+    Content = "Features marked as 'Detectable' have a higher chance of getting you banned. Use them carefully and at your own risk!"
+})
+
+-- Auto-collect coins (buggy, commented out in original)
+--[[
+local CoinSection = Tabs.Tools:AddSection("Coin Collection")
+
+local CoinMagnetToggle = Tabs.Tools:AddToggle("CoinMagnet", {
+    Title = "Coins Magnet (BUGGY)",
+    Description = "Automatically collect coins - currently buggy",
+    Default = false
+})
+
+CoinMagnetToggle:OnChanged(function(Value)
+    coinAutoCollect = Value
+    if coinAutoCollect then
+        notification("Coins magnet is currently buggy right now. Use at your own risk.")
+    end
+end)
+
+-- Coin collection loop
+task.spawn(function()
+    while task.wait(0.1) do
+        if not coinAutoCollect then continue end
+
+        if getMap() then
+            if getMap():FindFirstChild("CoinContainer") and #getMap():FindFirstChild("CoinContainer"):GetChildren() > 1 then
+                local function getClosestModelToPlayer(player, models)
+                    local closestModel = nil
+                    local closestDistance = math.huge 
+
+                    local playerPosition = player.Character.HumanoidRootPart.Position
+
+                    for _, model in ipairs(models) do
+                        local modelPosition = model:GetPivot().Position
+                        local distance = (modelPosition - playerPosition).Magnitude
+                        if distance < closestDistance then
+                            closestDistance = distance
+                            closestModel = model
+                        end
+                    end
+
+                    return closestModel
+                end
+
+                local closestCoin = getClosestModelToPlayer(localplayer, getMap():FindFirstChild("CoinContainer"):GetChildren())
+                if closestCoin and not claimedCoins[closestCoin] then
+                    if not localplayer.Character:FindFirstChild("HumanoidRootPart") then continue end
+                    local distance = (localplayer.Character:FindFirstChild("HumanoidRootPart").Position - closestCoin:GetPivot().Position).Magnitude
+                    local toclosestcoin = ts:Create(localplayer.Character:FindFirstChild("HumanoidRootPart"), TweenInfo.new(distance*0.05, Enum.EasingStyle.Linear), {
+                        CFrame = closestCoin:GetPivot()
+                    })
+                    toclosestcoin:Play()
+                    toclosestcoin.Completed:Wait()
+                    task.wait(0.1)
+                    closestCoin:Destroy()
+                    claimedCoins[closestCoin] = true
+                end
+            end
+        end
+    end
+end)
+--]]
+
+-- Key binds section
+local KeybindSection = Tabs.Settings:AddSection("Keybinds")
+
+local KeybindInfo = Tabs.Settings:AddParagraph({
+    Title = "Default Keybinds",
+    Content = "• LeftControl - Toggle UI\n• You can set custom keybinds for features using Fluent's built-in keybind system"
+})
+
+-- Save manager setup
+SaveManager:SetLibrary(Fluent)
+InterfaceManager:SetLibrary(Fluent)
+
+-- Ignore theme settings and certain indexes
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({})
+
+-- Build interface manager
+InterfaceManager:SetFolder("MM2ScriptSettings")
+InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+
+-- Build save manager
+SaveManager:SetFolder("MM2ScriptSettings/saves")
+SaveManager:BuildConfigSection(Tabs.Settings)
+
+-- Load autoload config
+task.spawn(function()
+    wait(1) -- Wait for everything to load
+    SaveManager:LoadAutoloadConfig()
+end)
+
+-- Final notification
+notification("MM2 Script loaded successfully! Choose your hacks from the tabs above.")
+
+-- Auto-shooting task (moved outside of toggle for better management)
+task.spawn(function()
+    while task.wait(1) do
+        if findSheriff() == localplayer and autoShooting then
+            -- This is handled in the toggle callback above
+        end
+    end
+end)

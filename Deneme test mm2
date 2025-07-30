@@ -8,7 +8,7 @@ if game.PlaceId == 142823291 then
   local Executor = identifyexecutor()
   local HIDEUI = get_hidden_gui or gethui
   local tweenInfoBTP = TweenInfo.new(2.9, Enum.EasingStyle.Linear)
-  getgenv().BeachballFarm = false
+  getgenv().coinFarm = false
   
   -- [ GUI ] --
   local ScreenGui = Instance.new('ScreenGui')
@@ -79,14 +79,14 @@ if game.PlaceId == 142823291 then
       move:Play()
     end
   end
-  function BeachballFarm()
-    while getgenv().BeachballFarm == true do
+  function coinFarm()
+    while getgenv().coinFarm == true do
       local children = game.Workspace:GetChildren()
       for _,child in pairs(children) do
         for _,child in pairs(child:GetChildren()) do
           table.insert(children, child)
         end
-        if child:IsA('BasePart') and child.Name == "Beachball_Server" then
+        if child:IsA('BasePart') and child.Name == "Coin_Server" then
           game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame = child.CFrame
           --bypassTP(child.CFrame)
           wait(2.9)
@@ -100,14 +100,14 @@ if game.PlaceId == 142823291 then
 	end
   
   -- [ Codes ] --
-  ScreenGui.Name = '13kefecan'
+  ScreenGui.Name = 'QuantumixHUB'
   ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
   ScreenGui.IgnoreGuiInset = false
   ScreenGui.ResetOnSpawn = false
   ScreenGui.Parent = CoreGUI
   
   local FrameCorner = Instance.new('UICorner')
-  MainFrame.Name = tostring('13k:'..math.random(999, 999999))
+  MainFrame.Name = tostring('QX:'..math.random(999, 999999))
   MainFrame.BackgroundColor3 = Color3.fromRGB(25,25,25)
   MainFrame.BorderSizePixel = 0
   MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -158,7 +158,7 @@ if game.PlaceId == 142823291 then
   
   Description.Name = "Description"
   Description.BackgroundTransparency = 1
-  Description.Text = "MM2 BeachballFARM"
+  Description.Text = "MM2 COINFARM (QX)"
   Description.Size = UDim2.new(1, -4, 0, 0)
   Description.Position = UDim2.new(0, 4, 0, 55)
   Description.TextSize = 20
@@ -198,13 +198,13 @@ if game.PlaceId == 142823291 then
   MainButton.MouseButton1Click:Connect(function()
     toggle = not toggle
     if toggle then
-      getgenv().BeachballFarm = true
+      getgenv().coinFarm = true
       MainButton.Text = "Working: ON"
       MainButton.TextColor3 = Color3.fromRGB(100, 255, 100)
-      BeachballFarm()
+      coinFarm()
     else
-      getgenv().BeachballFarm = false
-      BeachballFarm()
+      getgenv().coinFarm = false
+      coinFarm()
       MainButton.Text = "Working: OFF"
       MainButton.TextColor3 = Color3.fromRGB(255, 100, 100)
     end
